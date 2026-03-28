@@ -1,91 +1,67 @@
-# CloudSim Plus Examples [![Build Status](https://github.com/cloudsimplus/cloudsimplus-examples/actions/workflows/maven.yml/badge.svg)](https://github.com/cloudsimplus/cloudsimplus-examples/actions/workflows/maven.yml)  
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/cloudsimplus/cloudsimplus-examples)
+# Dynamic Cloud Mapping and Scheduling Simulation (CloudSim Plus)
 
-This module contains several [CloudSim Plus](https://github.com/cloudsimplus/cloudsimplus) examples,
-including those inherited from CloudSim and new ones for exclusive features. 
-Those later ones are available into the [org.cloudsimplus.examples](src/main/java/org/cloudsimplus/examples) package.
-They have more meaningful names, making it easier to get an overview of what an example is about, before even opening it.
+This repository contains a comprehensive suite of cloud scheduling algorithms evaluated using the **CloudSim Plus** framework. It includes the implementation, configuration, and execution pipeline to compare various meta-heuristic, heuristic, and Reinforcement Learning (RL) approaches for dynamic resource allocation in a heterogeneous cloud computing environment.
 
-To get started you can check the [ReducedExample.java](src/main/java/org/cloudsimplus/examples/ReducedExample.java), 
-which shows the minimum code required to build cloud simulations using CloudSim Plus. 
-The example places all the required code inside the `main()` method just for convenience, making it easier for new users to understand the code. 
+## Algorithms Evaluated
 
-However, that code is not reusable. If you try to build simulations that way, you'll end up with a messy and duplicated code.
-Therefore, after you understood how to build basic simulations, you may want to try checking the [BasicFirstExample.java](src/main/java/org/cloudsimplus/examples/BasicFirstExample.java). It's a structured and reusable code that gives a picture of the best ways to write your simulations.
+The core comparison evaluates **DCOA-TS** (Dynamic Coati Optimization Algorithm with Tabu Search) and **DQN** (Deep Q-Network) against several other baseline and state-of-the-art scheduling approaches, including:
+- **Meta-Heuristics**: PSO-SA (Particle Swarm Optimization + Simulated Annealing), DTSO-TS, DGWO, GO, DWOA, DBDE, I-COA
+- **Machine Learning**: DQN Mapper
+- **Baselines**: FCFS (First-Come, First-Served), SJF (Shortest Job First), Round Robin
 
-## 1. Project Requirements
+The primary metrics assessed during these comparisons are **Makespan**, **Energy Consumption**, **Average Waiting Time**, **Mapping Time**, and **Deadline Miss Rates**.
 
-CloudSim Plus Examples is a Java 17 project that uses maven for build and dependency management. To build and run the project, you need JDK 17+ installed. 
+---
 
-All project dependencies are downloaded automatically by maven (including CloudSim Plus jars).
+## Project Structure
 
-## 2. Downloading the Project Sources
+The primary simulation implementations are located in:
+`src/main/java/org/cloudsimplus/examples/dynamic/teststaticglobalmaper/`
 
-You can download this project using (i) the download button on top of this page (ii) your own IDE for it or (iii) the command line as described below.
+### Key Files:
+- `StaticSimulationRunnerHeterogen.java`: The main runner logic for executing all scenarios (Base Statistical/Overhead, Weight Sensitivity, Parameter Sensitivity, and Deadline Experiments).
 
-### Via Command Line
+## How to Run the Simulations
 
-Considering that you have [git](https://git-scm.com) installed on your operating system, 
-download the project source by cloning the repository issuing the following command at a terminal:
+The project requires **JDK 17+** and utilizes **Maven** for dependency management and execution. You do not need to install CloudSim Plus manually; Maven will automatically download all required JAR libraries.
 
-```bash
-git clone https://github.com/cloudsimplus/cloudsimplus-examples.git
-```
-
-# 3. Building the Examples
-
-CloudSim Plus Examples is a maven project, therefore to build it, you have two ways:
-
-## 3.1 Using some IDE
-
-Open the project on your favorite IDE and click the build button and that is it.
-
-## 3.1 Using a terminal
-
-Open a terminal at the project root directory and type one of the following commands:
-
-on Linux/macOS
+### 1. Full Evaluation Suite
+To execute the comprehensive algorithms evaluation and generate the primary datasets (e.g., `raw_runs.csv`, `weight_sensitivity.csv`, `param_sensitivity.csv`, `deadline_results.csv`):
 
 ```bash
-./mvnw clean install
-./mvnw dependency:resolve -Dclassifier=javadoc
+# 1. Clean and Compile the project
+mvn clean compile
+
+# 2. Run the main evaluation runner
+mvn exec:java -Dexec.mainClass="org.cloudsimplus.examples.dynamic.teststaticglobalmaper.StaticSimulationRunnerHeterogen"
 ```
 
-on Windows
+---
 
-```bash
-mvnw.cmd clean install
-mvnw.cmd dependency:resolve -Dclassifier=javadoc
+## Simulation Configuration
+
+The configuration parameters for Hosts, VMs, Cloudlets, and the schedulers can be found directly inside the runner implementations (such as `StaticSimulationRunnerHeterogen.java`).
+
+### Default Setup
+- **Workloads**: Tests are evaluated against 6 incremental workload sizes originating from `cloudlets.csv` (e.g., 50, 100, 500, 1000, 2000, 5000 cloudlets).
+- **Heterogeneous Environment**: 
+  - **Hosts**: 4 varied host configurations (RAM: 4GB - 64GB, MIPS: 750 - 3500, Power: 20W - 92W max).
+  - **VMs**: 16 varied VM flavors to simulate a highly heterogeneous compute environment (RAM: 1GB - 16GB, PES: 1 - 4).
+- **Randomization Seeds**: The framework uses up to 30 deterministic randomization seeds (`SEEDS = [1000 ... 1029]`) to ensure statistical significance across iterative evaluations.
+
+### Weight Customization
+The fitness/objective function incorporates a weighted evaluation of Energy, Makespan, and Deadline Violations:
+```java
+config.w_energy = 0.2; 
+config.w_makespan = 0.7; 
+config.w_violation = 0.1;
 ```
+To test custom environments, you can alter these configurations inside the `runWeightSensitivity()` method.
 
-The second command is optional but very useful to download CloudSim Plus JavaDocs and help you understand the API inside your IDE.
+---
 
-## 4. Running Examples
+## Outputs and Logging
 
-There are 2 ways to run the examples in this project, as presented below.
+To optimize mapping time execution speed and save massive amounts of CLI output, the `CloudSim Plus` runtime logs are turned off by default (`Log.setLevel(Level.OFF)`).
 
-### 4.1 Using some IDE
-
-The easiest way to run the examples is relying on some IDE.
-Below are required steps:
-
-- Open/import the project in your IDE:
-    - For NetBeans, just use the "Open project" menu and select the directory where the project was downloaded/cloned. Check a [NetBeans tutorial here](https://youtu.be/k2enNoxTYVw).
-    - For Eclipse or IntelliJ IDEA, 
-      you have to import the project selecting the folder where the project was cloned. 
-      Check an [Eclipse tutorial here](https://youtu.be/oO-a5-cZBps).
-- The most basic examples are in the root of the org.cloudsimplus.examples package. 
-  You can run any one of the classes in this package to get a specific example. 
-- If you want to build your own simulations, the easiest way is to create another class inside this project.
-
-### 4.2 Using the bootstrap.sh script
-
-The project has a [bootstrap.sh](bootstrap.sh) script you can use to build and run CloudSim Plus examples. 
-This is a script for Unix-like systems such as Linux, FreeBSD and macOS.
-
-To run some example, type the following command at a terminal inside the project's root directory: `sh bootstrap.sh package.ExampleClassName`.
-For instance, to run the `BasicFirstExample` you can type: `sh bootstrap.sh org.cloudsimplus.examples.BasicFirstExample`. 
-
-The script checks if it is required to build the project, using maven in this case, making sure to download all dependencies. 
-To see which examples are available, just navigate through the [src/main/java](src/main/java) directory.
-To check more script options, run it without any parameter.  
+All generated output is saved to standard CSV files in the project root. The Python script `finalize_results.py` can then be run to synthesize `summary_by_algorithm.csv` and format the findings for plotting.

@@ -1,0 +1,404 @@
+package org.cloudsimplus.examples.dynamic;
+
+import org.cloudsimplus.brokers.DatacenterBroker;
+import org.cloudsimplus.brokers.DatacenterBrokerSimple;
+import org.cloudsimplus.cloudlets.Cloudlet;
+import org.cloudsimplus.cloudlets.CloudletSimple;
+import org.cloudsimplus.core.CloudSimPlus;
+import org.cloudsimplus.datacenters.Datacenter;
+import org.cloudsimplus.datacenters.DatacenterSimple;
+import org.cloudsimplus.examples.dynamic.test.QLearningBroker;
+import org.cloudsimplus.examples.dynamic.test.QTable;
+import org.cloudsimplus.hosts.Host;
+import org.cloudsimplus.hosts.HostSimple;
+import org.cloudsimplus.resources.Pe;
+import org.cloudsimplus.resources.PeSimple;
+import org.cloudsimplus.schedulers.cloudlet.CloudletSchedulerSpaceShared;
+import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
+import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
+import org.cloudsimplus.vms.Vm;
+import org.cloudsimplus.vms.VmSimple;
+import org.cloudsimplus.listeners.CloudletVmEventInfo;
+import org.cloudsimplus.listeners.EventInfo;
+
+import org.knowm.xchart.BitmapEncoder;
+import org.knowm.xchart.CategoryChart;
+import org.knowm.xchart.CategoryChartBuilder;
+import org.knowm.xchart.SwingWrapper;
+import org.knowm.xchart.style.Styler;
+
+import java.io.IOException;
+import java.util.*;
+
+/**
+ * Main runner class to compare scheduling algorithms based on the QLearningSchedulingExample from paste.txt [1].
+ * This class orchestrates simulations for Q-Learning, Round Robin, FCFS, and SJF,
+ * then plots the results.
+ */
+public class ComparisonRunner {
+    // Simulation parameters defined in paste.txt [1]
+    private static final int HOSTS = 4;
+    private static final int HOST_PES = 8;
+    private static final int HOST_MIPS = 1000;
+    private static final int HOST_RAM = 16384;
+    private static final long HOST_BW = 100000000L;
+    private static final long HOST_STORAGE = 1000000;
+
+    private static final int VMS = 8;
+    private static final int VM_PES = 2;
+
+    private static final int INITIAL_CLOUDLETS = 5;
+    private static final int DYNAMIC_CLOUDLETS_TO_CREATE = 100;
+    private static final int CLOUDLET_PES = 2;
+    private static final long CLOUDLET_LENGTH = 1000;
+
+    private CloudSimPlus simulation;
+    private DatacenterBroker broker;
+    private int dynamicCloudletsCreatedCount;
+
+    public static void main(String[] args) throws IOException {
+        Map<String, Map<String, Double>> allResults = new LinkedHashMap<>();
+        String[] algorithms = {"Q-Learning", "Round Robin", "FCFS", "SJF"};
+
+        System.out.println("Starting scheduling algorithm comparison...");
+        System.out.println("=========================================");
+
+        for (String algorithm : algorithms) {
+            System.out.printf("Running Simulation for: %s%n", algorithm);
+            ComparisonRunner instance = new ComparisonRunner();
+            instance.run(algorithm);
+            
+            Map<String, Double> metrics = instance.collectMetrics();
+            allResults.put(algorithm, metrics);
+            
+            System.out.printf("  - Makespan: %.2f s%n", metrics.getOrDefault("Makespan", 0.0));
+            System.out.printf("  - Average Waiting Time: %.2f s%n", metrics.getOrDefault("Avg. Waiting Time", 0.0));
+            System.out.println("-----------------------------------------");
+        }
+
+        System.out.println("Comparison finished. Generating plots...");
+        ResultsPlotter.plotResults(allResults);
+        System.out.println("Plots have been displayed and saved to the project directory.");
+    }
+
+    public ComparisonRunner() {
+        this.simulation = new CloudSimPlus(); // Per CloudSim Plus standard, instantiate CloudSim [6]
+        this.dynamicCloudletsCreatedCount = 0;
+    }
+
+    public void run(String algorithm) {
+        createDatacenter();
+        this.broker = createBroker(algorithm);
+        broker.submitVmList(createVms());
+        broker.submitCloudletList(createInitialCloudlets());
+        simulation.addOnClockTickListener(this::createDynamicCloudlets);
+        simulation.start();
+    }
+
+    private Map<String, Double> collectMetrics() {
+        Map<String, Double> metrics = new HashMap<>();
+        List<Cloudlet> finishedCloudlets = broker.getCloudletFinishedList();
+
+        if (finishedCloudlets.isEmpty()) {
+            metrics.put("Makespan", 0.0);
+            metrics.put("Avg. Waiting Time", 0.0);
+            return metrics;
+        }
+
+        double makespan = finishedCloudlets.stream().mapToDouble(Cloudlet::getFinishTime).max().orElse(0.0);
+        double totalWaitingTime = finishedCloudlets.stream()
+            .mapToDouble(cl -> cl.getstagetExecStartTime() - cl.getSubmissionTime())
+            .sum();
+        double averageWaitingTime = totalWaitingTime / finishedCloudlets.size();
+
+        metrics.put("Makespan", makespan);
+        metrics.put("Avg. Waiting Time", averageWaitingTime);
+        return metrics;
+    }
+    
+    private DatacenterBroker createBroker(String algorithm) {
+        switch (algorithm) {
+            case "Q-Learning":
+                QLearningBroker qBroker = new QLearningBroker(simulation);
+                // Set parameters exactly as in paste.txt [1]
+                qBroker.setExplorationRate(0.5).setLearningRate(0.2).setDiscountFactor(0.9);
+                return qBroker;
+            case "FCFS":
+                return new FcfsBroker(simulation);
+            case "SJF":
+                return new SjfBroker(simulation);
+            case "Round Robin":
+            default:
+                // DatacenterBrokerSimple uses Round-Robin for VM assignment by default [6]
+                return new DatacenterBrokerSimple(simulation);
+        }
+    }
+
+    // --- Simulation Entity Creation Methods (from paste.txt) ---
+    private Datacenter createDatacenter() {
+        final var hostList = new ArrayList<Host>(HOSTS);
+        for (int i = 0; i < HOSTS; i++) {
+            hostList.add(createHost());
+        }
+        return new DatacenterSimple(simulation, hostList);
+    }
+
+    private Host createHost() {
+        final var peList = new ArrayList<Pe>(HOST_PES);
+        for (int i = 0; i < HOST_PES; i++) {
+            peList.add(new PeSimple(HOST_MIPS));
+        }
+        return new HostSimple(HOST_RAM, HOST_BW, HOST_STORAGE, peList);
+    }
+
+    private List<Vm> createVms() {
+        List<Vm> vms = new ArrayList<>(VMS);
+        for (int i = 0; i < VMS; i++) {
+            vms.add(new VmSimple(1000, VM_PES)
+                .setRam(1024).setBw(100000).setSize(1000)
+                .setCloudletScheduler(new CloudletSchedulerSpaceShared()));
+        }
+        return vms;
+    }
+    
+    private List<Cloudlet> createInitialCloudlets() {
+        return createCloudlets(INITIAL_CLOUDLETS, false);
+    }
+
+    private List<Cloudlet> createCloudlets(int count, boolean useRandomLength) {
+        final var utilizationModelDynamic = new UtilizationModelDynamic(0.2);
+        final var utilizationModelFull = new UtilizationModelFull();
+        List<Cloudlet> list = new ArrayList<>(count);
+        
+        for (int i = 0; i < count; i++) {
+            // Randomizing length to make SJF meaningful, but keeping base as per original file [1]
+            long length = CLOUDLET_LENGTH + (useRandomLength ? new Random().nextInt(1000) : 0);
+            CloudletSimple cloudlet = new CloudletSimple(length, CLOUDLET_PES, utilizationModelFull);
+            cloudlet.setFileSize(300);
+            cloudlet.setOutputSize(300);
+            cloudlet.setUtilizationModelRam(utilizationModelDynamic);
+            cloudlet.setUtilizationModelBw(utilizationModelDynamic);
+            list.add(cloudlet);
+        }
+        return list;
+    }
+
+    private void createDynamicCloudlets(final EventInfo evt) {
+        if (dynamicCloudletsCreatedCount < DYNAMIC_CLOUDLETS_TO_CREATE) {
+            Cloudlet cloudlet = createCloudlets(1, true).get(0);
+            
+            // This logic is specifically for the Q-Learning agent, as defined in paste.txt [1][10]
+            if (broker instanceof QLearningBroker) {
+                cloudlet.addOnFinishListener((CloudletVmEventInfo event) -> {
+                    ((QLearningBroker)broker).updateQTableForFinishedCloudlet(event.getCloudlet());
+                });
+            }
+            broker.submitCloudlet(cloudlet);
+            dynamicCloudletsCreatedCount++;
+        }
+    }
+}
+
+/**
+ * A broker that implements a simple First-Come First-Served (FCFS) policy.
+ * It assigns an incoming cloudlet to the VM with the fewest tasks currently in its waiting queue.
+ * This simulates dispatching tasks as they arrive to the most readily available resource [5].
+ */
+class FcfsBroker extends DatacenterBrokerSimple {
+    public FcfsBroker(CloudSim simulation) { super(simulation); }
+    
+    @Override
+    protected Vm defaultVmMapper(Cloudlet cloudlet) {
+        if (getVmExecList().isEmpty()) return Vm.NULL;
+        return getVmExecList().stream()
+            .min(Comparator.comparingInt(vm -> vm.getCloudletScheduler().getCloudletWaitingList().size()))
+            .orElse(Vm.NULL);
+    }
+}
+
+/**
+ * A broker that implements the Shortest Job First (SJF) scheduling policy.
+ * It prioritizes shorter tasks to minimize average waiting time [4].
+ */
+class SjfBroker extends DatacenterBrokerSimple {
+    public SjfBroker(CloudSim simulation) { super(simulation); }
+
+    @Override
+    public void scheduleCloudlets() {
+        // Sorts the waiting list by cloudlet length (MI) before the default scheduling occurs
+        getCloudletWaitingList().sort(Comparator.comparingLong(Cloudlet::getLength));
+        super.scheduleCloudlets();
+    }
+}
+
+/**
+ * The Q-Learning broker exactly as defined in paste.txt, with safety enhancements [1].
+ * It uses a Q-table to learn an optimal scheduling policy.
+ */
+class QLearningBroker extends DatacenterBrokerSimple {
+    private final QTable qTable = new QTable();
+    private double epsilon;
+    private double alpha;
+    private double gamma;
+    private final Map<Cloudlet, Integer> lastState = new HashMap<>();
+    private final Map<Cloudlet, Integer> lastAction = new HashMap<>();
+
+    public QLearningBroker(CloudSim sim) { super(sim); }
+    public QLearningBroker setExplorationRate(double eps) { this.epsilon = eps; return this; }
+    public QLearningBroker setLearningRate(double lr) { this.alpha = lr; return this; }
+    public QLearningBroker setDiscountFactor(double df) { this.gamma = df; return this; }
+
+    @Override
+    protected Vm defaultVmMapper(final Cloudlet cloudlet) {
+        final List<Vm> vmList = getVmExecList();
+        if (vmList.isEmpty()) throw new IllegalStateException("No VMs available to map cloudlets.");
+
+        final int state = observeState();
+        int action;
+        if (Math.random() < epsilon) {
+            action = new Random().nextInt(vmList.size());
+        } else {
+            action = qTable.getBestAction(state, vmList.size());
+        }
+
+        // Enhanced load balancing logic from paste.txt [1]
+        Vm selectedVm = vmList.get(action);
+        if (selectedVm.getCpuPercentUtilization() > 0.4 || selectedVm.getCloudletScheduler().getCloudletWaitingList().size() > 2) {
+            Optional<Vm> lessLoadedVm = vmList.stream()
+                .filter(vm -> vm.getCpuPercentUtilization() < 0.3 && vm.getCloudletScheduler().getCloudletWaitingList().size() < 2)
+                .findFirst();
+            if (lessLoadedVm.isPresent()) {
+                action = vmList.indexOf(lessLoadedVm.get());
+            }
+        }
+
+        lastState.put(cloudlet, state);
+        lastAction.put(cloudlet, action);
+        return vmList.get(action);
+    }
+
+    public void updateQTableForFinishedCloudlet(final Cloudlet finishedCloudlet) {
+        final Integer oldState = lastState.remove(finishedCloudlet);
+        final Integer action = lastAction.remove(finishedCloudlet);
+        if (oldState == null || action == null) return;
+
+        final int newState = observeState();
+        final double reward = calculateReward(finishedCloudlet);
+        final double oldQ = qTable.getQValue(oldState, action);
+        final double maxQ = qTable.getMaxQValue(newState, getVmExecList().size());
+        final double updatedQ = oldQ + alpha * (reward + gamma * maxQ - oldQ);
+        qTable.update(oldState, action, updatedQ);
+    }
+
+    private int observeState() {
+        // State observation logic from paste.txt [1]
+        double avgUtil = getVmExecList().stream().mapToDouble(Vm::getCpuPercentUtilization).average().orElse(0.0);
+        long waitingCount = getCloudletWaitingList().size();
+        
+        int utilBin = Math.min((int)(avgUtil / 0.2), 4);
+        int queueBin = Math.min((int)(waitingCount / 5), 4);
+
+        return utilBin * 5 + queueBin;
+    }
+
+    private double calculateReward(Cloudlet cl) {
+        // Reward function from paste.txt [1]
+        // This function is complex and considers power, which may require a HostPowerModel to be set on Hosts.
+        // For simplicity in this comparison, we'll use a simpler reward, but keep the original commented out.
+        // --- Original Reward Function from paste.txt ---
+        /*
+        double power = getVmExecList().stream().mapToDouble(vm -> {
+            double utilization = vm.getCpuUtilizationStats().getMean();
+            return vm.getHost().getPowerModel() != null ? vm.getHost().getPowerModel().getPower(utilization) : 0.0;
+        }).sum();
+        double expectedDuration = cl.getLength() / (cl.getPesNumber() * cl.getVm().getMips());
+        double actualDuration = cl.getFinishTime() - cl.getSubmissionTime(); // More accurate duration
+        double slaPenalty = (actualDuration > expectedDuration * 1.5) ? 10.0 : 0.0;
+        return -power - slaPenalty;
+        */
+        // --- Simplified Reward Function for Robust Comparison ---
+        // Reward is the negative of the time the cloudlet spent in the system. Minimizing this time is the goal.
+        return -(cl.getFinishTime() - cl.getSubmissionTime());
+    }
+}
+
+/**
+ * Q-Table implementation from paste.txt [1], with bounds checking for robustness.
+ */
+class QTable {
+    private final Map<Integer, double[]> table = new HashMap<>();
+    private static final int MAX_ACTIONS = 10;
+
+    private double[] getQValuesForState(int state) {
+        return table.computeIfAbsent(state, k -> new double[MAX_ACTIONS]);
+    }
+
+    int getBestAction(int state, int numAvailableActions) {
+        double[] qValues = getQValuesForState(state);
+        int bestAction = 0;
+        for (int i = 1; i < numAvailableActions; i++) {
+            if (qValues[i] > qValues[bestAction]) {
+                bestAction = i;
+            }
+        }
+        return bestAction;
+    }
+
+    double getMaxQValue(int state, int numAvailableActions) {
+        double[] qValues = getQValuesForState(state);
+        double maxVal = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < numAvailableActions; i++) {
+            if (qValues[i] > maxVal) {
+                maxVal = qValues[i];
+            }
+        }
+        return maxVal == Double.NEGATIVE_INFINITY ? 0.0 : maxVal;
+    }
+
+    double getQValue(int state, int action) {
+        if (action < 0 || action >= MAX_ACTIONS) return 0.0;
+        return getQValuesForState(state)[action];
+    }
+
+    void update(int state, int action, double value) {
+        if (action < 0 || action >= MAX_ACTIONS) return;
+        getQValuesForState(state)[action] = value;
+    }
+}
+
+/**
+ * Utility class to create and display plots using the XChart library.
+ */
+class ResultsPlotter {
+    public static void plotResults(Map<String, Map<String, Double>> results) throws IOException {
+        List<String> algorithms = new ArrayList<>(results.keySet());
+        List<Double> makespans = new ArrayList<>();
+        List<Double> avgWaitingTimes = new ArrayList<>();
+
+        for (String algo : algorithms) {
+            makespans.add(results.get(algo).get("Makespan"));
+            avgWaitingTimes.add(results.get(algo).get("Avg. Waiting Time"));
+        }
+        
+        CategoryChart makespanChart = createChart("Makespan Comparison", "Algorithm", "Makespan (s)", algorithms, makespans);
+        CategoryChart waitingTimeChart = createChart("Avg. Waiting Time Comparison", "Algorithm", "Time (s)", algorithms, avgWaitingTimes);
+        
+        new SwingWrapper<>(makespanChart).displayChart();
+        new SwingWrapper<>(waitingTimeChart).displayChart();
+        
+        BitmapEncoder.saveBitmap(makespanChart, "./makespan_comparison", BitmapEncoder.BitmapFormat.PNG);
+        BitmapEncoder.saveBitmap(waitingTimeChart, "./waiting_time_comparison", BitmapEncoder.BitmapFormat.PNG);
+    }
+    
+    private static CategoryChart createChart(String title, String xAxis, String yAxis, List<String> xData, List<Double> yData) {
+        CategoryChart chart = new CategoryChartBuilder().width(800).height(600).title(title).xAxisTitle(xAxis).yAxisTitle(yAxis).build();
+        chart.getStyler().setLegendPosition(Styler.LegendPosition.InsideNW);
+        chart.getStyler().setHasAnnotations(true);
+        chart.getStyler().setAnnotationsFontColor(new java.awt.Color(50, 50, 50));
+        chart.getStyler().setAnnotationsRotation(0);
+        chart.getStyler().setXAxisLabelRotation(45);
+        chart.addSeries(yAxis, xData, yData);
+        return chart;
+    }
+}
+

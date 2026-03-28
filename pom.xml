@@ -155,5 +155,16 @@
             <artifactId>logback-classic</artifactId>
             <version>1.4.5</version>
         </dependency>
+
+        <dependency>
+	        <groupId>org.knowm.xchart</groupId>
+	        	<artifactId>xchart</artifactId>
+	        <version>3.8.6</version>
+    	</dependency>
+    	<dependency>
+	    <groupId>org.jfree</groupId>
+	    	<artifactId>jfreechart</artifactId>
+	    <version>1.5.3</version> <!-- Or the latest version -->
+		</dependency>
     </dependencies>
 </project>
