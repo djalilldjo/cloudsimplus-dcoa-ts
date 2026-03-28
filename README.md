@@ -4,7 +4,7 @@ This repository contains a comprehensive suite of cloud scheduling algorithms ev
 
 ## Algorithms Evaluated
 
-The core comparison evaluates **DCOA-TS** (Dynamic Coati Optimization Algorithm with Tabu Search) and **DQN** (Deep Q-Network) against several other baseline and state-of-the-art scheduling approaches, including:
+The core comparison evaluates **DCOA-TS** (Discrete Coati Optimization Algorithm) and **DQN** (Deep Q-Network) against several other baseline and state-of-the-art scheduling approaches, including:
 - **Meta-Heuristics**: PSO-SA (Particle Swarm Optimization + Simulated Annealing), DTSO-TS, DGWO, GO, DWOA, DBDE, I-COA
 - **Machine Learning**: DQN Mapper
 - **Baselines**: FCFS (First-Come, First-Served), SJF (Shortest Job First), Round Robin
