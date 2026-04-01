@@ -64,4 +64,4 @@ To test custom environments, you can alter these configurations inside the `runW
 
 To optimize mapping time execution speed and save massive amounts of CLI output, the `CloudSim Plus` runtime logs are turned off by default (`Log.setLevel(Level.OFF)`).
 
-All generated output is saved to standard CSV files in the project root. The Python script `finalize_results.py` can then be run to synthesize `summary_by_algorithm.csv` and format the findings for plotting.
+All generated output is saved to standard CSV files in the project root. The Python script plot.py can then be run to generate the final plots from the findings.
